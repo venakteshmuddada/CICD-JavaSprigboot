@@ -48,18 +48,19 @@ pipeline {
 
     stage('Update GitOps Repo') {
       steps {
-      sh '''
-        git config --global user.email "jenkins@ci.com"
-        git config --global user.name "jenkins"
-        rm -rf gitops-manifests
-        git clone $GITOPS_REPO gitops-manifests
-        cd gitops-manifests/overlays/dev
-        sed -i "s|image:.*|image: $IMAGE_NAME:$IMAGE_TAG|" image-patch.yaml
-        git add image-patch.yaml
-        git commit -m "Update image tag to $IMAGE_TAG"
-        git push https://$GITHUB_PAT@github.com/venakteshmuddada/gitops-manifests.git
-      '''
-
+        withCredentials([string(credentialsId: 'GITHUB_PAT', variable: 'GITHUB_PAT')]) {
+          sh '''
+            git config --global user.email "jenkins@ci.com"
+            git config --global user.name "jenkins"
+            rm -rf gitops-manifests
+            git clone $GITOPS_REPO gitops-manifests
+            cd gitops-manifests/overlays/dev
+            sed -i "s|image:.*|image: $IMAGE_NAME:$IMAGE_TAG|" image-patch.yaml
+            git add image-patch.yaml
+            git commit -m "Update image tag to $IMAGE_TAG"
+            git push https://$GITHUB_PAT@github.com/venakteshmuddada/gitops-manifests.git
+          '''
+        }
       }
     }
   }
