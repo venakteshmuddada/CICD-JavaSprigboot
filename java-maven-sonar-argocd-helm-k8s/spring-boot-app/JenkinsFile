@@ -18,39 +18,45 @@ pipeline {
 
     stage('SonarQube Scan') {
       steps {
-        withSonarQubeEnv('MySonarQubeServer') {
-          sh 'mvn clean verify sonar:sonar -Dsonar.projectKey=spring-boot-app -Dsonar.token=$SONARQUBE_TOKEN'
+        dir('java-maven-sonar-argocd-helm-k8s/spring-boot-app') {
+          withSonarQubeEnv('MySonarQubeServer') {
+            sh 'mvn clean verify sonar:sonar -Dsonar.projectKey=spring-boot-app -Dsonar.token=$SONARQUBE_TOKEN'
+          }
         }
       }
     }
 
     stage('Build') {
       steps {
-        sh 'mvn clean package -DskipTests'
+        dir('java-maven-sonar-argocd-helm-k8s/spring-boot-app') {
+          sh 'mvn clean package -DskipTests'
+        }
       }
     }
 
     stage('Docker Build & Push') {
       steps {
-        sh '''
-          docker build -t $IMAGE_NAME:$IMAGE_TAG .
-          echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
-          docker push $IMAGE_NAME:$IMAGE_TAG
-        '''
+        dir('java-maven-sonar-argocd-helm-k8s/spring-boot-app') {
+          sh '''
+            docker build -t $IMAGE_NAME:$IMAGE_TAG .
+            echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
+            docker push $IMAGE_NAME:$IMAGE_TAG
+          '''
+        }
       }
     }
 
     stage('Update GitOps Repo') {
       steps {
         sh '''
-        git config --global user.email "jenkins@ci.com"
-        git config --global user.name "jenkins"
-        git clone $GITOPS_REPO gitops-manifests
-        cd gitops-manifests/overlays/dev
-        sed -i "s|image:.*|image: $IMAGE_NAME:$IMAGE_TAG|" image-patch.yaml
-        git add image-patch.yaml
-        git commit -m "Update image tag to $IMAGE_TAG"
-        git push https://$GITHUB_PAT@github.com/venakteshmuddada/gitops-manifests.git
+          git config --global user.email "jenkins@ci.com"
+          git config --global user.name "jenkins"
+          git clone $GITOPS_REPO gitops-manifests
+          cd gitops-manifests/overlays/dev
+          sed -i "s|image:.*|image: $IMAGE_NAME:$IMAGE_TAG|" image-patch.yaml
+          git add image-patch.yaml
+          git commit -m "Update image tag to $IMAGE_TAG"
+          git push https://$GITHUB_PAT@github.com/venakteshmuddada/gitops-manifests.git
         '''
       }
     }
