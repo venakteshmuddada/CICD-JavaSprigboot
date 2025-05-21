@@ -1,68 +1,58 @@
 pipeline {
-  agent {
-    docker {
-      image 'abhishekf5/maven-abhishek-docker-agent:v1'
-      args '--user root -v /var/run/docker.sock:/var/run/docker.sock' // mount Docker socket to access the host's Docker daemon
-    }
+  agent any
+
+  environment {
+    SONARQUBE_TOKEN = credentials('sonarqube-token')
+    DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
+    GITOPS_REPO = 'https://github.com/venakteshmuddada/gitops-manifests.git'
+    IMAGE_NAME = 'venkateshadmin/cicd-flow'
+    IMAGE_TAG = "${BUILD_NUMBER}"
   }
+
   stages {
     stage('Checkout') {
       steps {
-        sh 'echo passed'
-        //git branch: 'main', url: 'https://github.com/venakteshmuddada/CICD-JavaSprigboot.git'
+        git url: 'https://github.com/venakteshmuddada/CICD-JavaSprigboot.git', branch: 'main'
       }
     }
-    stage('Build and Test') {
+
+    stage('SonarQube Scan') {
       steps {
-        sh 'ls -ltr'
-        // build the project and create a JAR file
-        sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn clean package'
+        withSonarQubeEnv('MySonarQubeServer') {
+          sh 'mvn clean verify sonar:sonar -Dsonar.projectKey=spring-boot-app -Dsonar.token=$SONARQUBE_TOKEN'
+        }
       }
     }
-    stage('Static Code Analysis') {
-      environment {
-        SONAR_URL = "http://18.221.200.163:9000"
-      }
+
+    stage('Build') {
       steps {
-        withCredentials([string(credentialsId: 'sonarqube', variable: 'SONAR_AUTH_TOKEN')]) {
-          sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN -Dsonar.host.url=${SONAR_URL}'
-        }
+        sh 'mvn clean package -DskipTests'
       }
     }
-    stage('Build and Push Docker Image') {
-      environment {
-        DOCKER_IMAGE = "abhishekf5/ultimate-cicd:${BUILD_NUMBER}"
-        // DOCKERFILE_LOCATION = "java-maven-sonar-argocd-helm-k8s/spring-boot-app/Dockerfile"
-        REGISTRY_CREDENTIALS = credentials('docker-cred')
-      }
+
+    stage('Docker Build & Push') {
       steps {
-        script {
-            sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && docker build -t ${DOCKER_IMAGE} .'
-            def dockerImage = docker.image("${DOCKER_IMAGE}")
-            docker.withRegistry('https://index.docker.io/v1/', "docker-cred") {
-                dockerImage.push()
-            }
-        }
+        sh '''
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+          echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
+          docker push $IMAGE_NAME:$IMAGE_TAG
+        '''
       }
     }
-    stage('Update Deployment File') {
-        environment {
-            GIT_REPO_NAME = "CICD-JavaSprigboot"
-            GIT_USER_NAME = "venakteshmuddada"
-        }
-        steps {
-            withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
-                sh '''
-                    git config user.email "abhishek.xyz@gmail.com"
-                    git config user.name "Abhishek Veeramalla"
-                    BUILD_NUMBER=${BUILD_NUMBER}
-                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-                    git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-                    git commit -m "Update deployment image to version ${BUILD_NUMBER}"
-                    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
-                '''
-            }
-        }
+
+    stage('Update GitOps Repo') {
+      steps {
+        sh '''
+        git config --global user.email "jenkins@ci.com"
+        git config --global user.name "jenkins"
+        git clone $GITOPS_REPO gitops-manifests
+        cd gitops-manifests/overlays/dev
+        sed -i "s|image:.*|image: $IMAGE_NAME:$IMAGE_TAG|" image-patch.yaml
+        git add image-patch.yaml
+        git commit -m "Update image tag to $IMAGE_TAG"
+        git push https://$GITHUB_PAT@github.com/venakteshmuddada/gitops-manifests.git
+        '''
+      }
     }
   }
 }
